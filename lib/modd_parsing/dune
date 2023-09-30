@@ -1,0 +1,12 @@
+(library
+ (public_name modd.parsing)
+ (name modd_parsing)
+ (preprocess
+  (pps ppx_jane))
+ (libraries core))
+
+(ocamllex lexer)
+
+(menhir
+ (modules parser)
+ (flags --explain --dump))

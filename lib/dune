@@ -1,0 +1,3 @@
+(library
+ (name modd)
+ (libraries modd.parsing modd.typing modd.interpreter))

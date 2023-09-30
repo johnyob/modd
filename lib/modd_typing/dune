@@ -1,0 +1,6 @@
+(library
+ (public_name modd.typing)
+ (name modd_typing)
+ (libraries core modd.parsing)
+ (preprocess
+  (pps ppx_jane)))
