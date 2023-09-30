@@ -2,8 +2,8 @@ open! Import
 open Ast_types
 open Types
 
-type 'a instance = 'a * type_expr list
-and 'a abstraction = type_var list * 'a
+type 'a instance = 'a * type_expr list [@@deriving sexp]
+type 'a abstraction = type_var list * 'a [@@deriving sexp]
 
 type pattern =
   { pat_desc : pattern_desc
@@ -16,11 +16,13 @@ and pattern_desc =
   | Tpat_const of constant
   | Tpat_tuple of pattern list
   | Tpat_construct of constructor_description * pattern option
+[@@deriving sexp]
 
 type function_param =
   { tparam_pat : pattern
   ; tparam_mode : mode
   }
+[@@deriving sexp]
 
 type expression =
   { exp_desc : expression_desc
@@ -49,3 +51,4 @@ and case =
   { tc_lhs : pattern
   ; tc_rhs : expression
   }
+[@@deriving sexp]
