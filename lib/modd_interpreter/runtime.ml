@@ -31,11 +31,32 @@ module Env = struct
   type t =
     { values : value String.Map.t
     ; types : Types.type_expr Type_var.Map.t
+    ; layer : layer
     }
+
+  and layer =
+    | Region of
+        { start : int
+        ; next : t
+        }
+    | Nothing
   [@@deriving sexp]
 
-  let empty = { values = String.Map.empty; types = Type_var.Map.empty }
+  let empty = { values = String.Map.empty; types = Type_var.Map.empty; layer = Nothing }
   let add t ~var ~value = { t with values = Map.set t.values ~key:var ~data:value }
+
+  let enter_region t ~start =
+    { values = String.Map.empty
+    ; types = Type_var.Map.empty
+    ; layer = Region { start; next = t }
+    }
+  ;;
+
+  let exit_region t ~epilogue =
+    match t.layer with
+    | Nothing -> raise_s [%message "Env.exit_region: expected to be in a region"]
+    | Region { start; next = _ } -> epilogue start
+  ;;
 
   let add_type t ~type_var ~type_expr =
     { t with types = Map.set t.types ~key:type_var ~data:type_expr }

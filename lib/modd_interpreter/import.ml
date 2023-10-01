@@ -12,6 +12,7 @@ module Dynarray : sig
   val iter : 'a t -> f:('a -> unit) -> unit
   val iteri : 'a t -> f:(int -> 'a -> unit) -> unit
   val pop_last : 'a t -> 'a option
+  val remove_last : 'a t -> unit
   val add_last : 'a t -> 'a -> unit
   val capacity : 'a t -> int
   val fit_capacity : 'a t -> unit
@@ -50,6 +51,12 @@ end = struct
         Option_array.unsafe_set_none arr last;
         t.length <- last;
         Some x)
+  ;;
+
+  let remove_last t =
+    match pop_last t with
+    | None -> raise_s [%message "Cannot remove last from empty array"]
+    | Some _ -> ()
   ;;
 
   let capacity t = Option_array.length t.arr

@@ -6,13 +6,36 @@ type state =
   ; memory : Memory.t
   }
 
+let enter_region state =
+  let start = Dynarray.length state.memory.stack in
+  let env = Env.enter_region state.env ~start in
+  { state with env }
+;;
+
+let exit_region state =
+  let stack = state.memory.stack in
+  Env.exit_region state.env ~epilogue:(fun region_start ->
+    while Dynarray.length stack > region_start do
+      Dynarray.remove_last stack
+    done)
+;;
+
+let env_add_types env ~type_vars ~type_exprs =
+  match
+    List.fold2 type_vars type_exprs ~init:env ~f:(fun env type_var type_expr ->
+      Env.add_type env ~type_var ~type_expr)
+  with
+  | Unequal_lengths -> raise_s [%message "Interpreter.env_add_types: unequal lengths"]
+  | Ok env -> env
+;;
+
 let realm_of_mode : Types.mode -> realm = function
   | Tmod_global -> Heap
   | Tmod_local -> Stack
 ;;
 
 let rec match_pattern ~(state : state) (value : value) (pat : Typedtree.pattern)
-    : Env.t option
+  : Env.t option
   =
   let open Option.Let_syntax in
   let { env; memory } = state in
@@ -22,19 +45,19 @@ let rec match_pattern ~(state : state) (value : value) (pat : Typedtree.pattern)
   | Constant const, Tpat_const const' when equal_constant const const' -> return env
   | Address addr, pat ->
     (match Memory.deref state.memory addr, pat with
-    | Tuple values, Tpat_tuple pats ->
-      (match
-         List.fold2 values pats ~init:(return env) ~f:(fun env value pat ->
-             let%bind env = env in
-             match_pattern ~state:{ env; memory } value pat)
-       with
-      | Unequal_lengths -> None
-      | Ok result -> result)
-    | Variant (tag, Some value), Tpat_construct (constr, Some pat)
-      when String.(constr.constructor_name = tag) -> match_pattern ~state value pat
-    | Variant (tag, None), Tpat_construct (constr, None)
-      when String.(constr.constructor_name = tag) -> return env
-    | _ -> None)
+     | Tuple values, Tpat_tuple pats ->
+       (match
+          List.fold2 values pats ~init:(return env) ~f:(fun env value pat ->
+            let%bind env = env in
+            match_pattern ~state:{ env; memory } value pat)
+        with
+        | Unequal_lengths -> None
+        | Ok result -> result)
+     | Variant (tag, Some value), Tpat_construct (constr, Some pat)
+       when String.(constr.constructor_name = tag) -> match_pattern ~state value pat
+     | Variant (tag, None), Tpat_construct (constr, None)
+       when String.(constr.constructor_name = tag) -> return env
+     | _ -> None)
   | _ -> None
 ;;
 
@@ -47,8 +70,8 @@ let eval_unary_op ~state ~(realm : realm) (uop : unary_op) (arg : value) : value
     Address addr
   | Uop_deref, Address ref_addr ->
     (match Memory.deref state.memory ref_addr with
-    | Ref value -> value
-    | _ -> raise_s [%message "Interpreter.eval_unary_op: expected ref"])
+     | Ref value -> value
+     | _ -> raise_s [%message "Interpreter.eval_unary_op: expected ref"])
   | _ -> raise_s [%message "Interpreter.eval_unary_op: type error"]
 ;;
 
@@ -95,8 +118,8 @@ and eval_match ~state matchee cases =
     | [] -> raise_s [%message "Interpreter.eval_match: match error"]
     | case :: cases ->
       (match eval_case ~state matchee case with
-      | Some result -> result
-      | None -> loop cases)
+       | Some result -> result
+       | None -> loop cases)
   in
   loop cases
 
@@ -105,14 +128,17 @@ and eval_instance ~state (value : value) type_exprs : value =
   | value, [] -> value
   | Abstraction { env; type_vars; body }, type_exprs ->
     (match Memory.deref state.memory env with
-    | Env env ->
-      (match
-         List.fold2 type_vars type_exprs ~init:env ~f:(fun env type_var type_expr ->
-             Env.add_type env ~type_var ~type_expr)
-       with
-      | Unequal_lengths -> raise_s [%message "Interpreter.eval_instance: type error"]
-      | Ok env -> eval ~state:{ state with env } body)
-    | _ -> raise_s [%message "Interpreter.eval_instance: type error"])
+     | Env env ->
+       (* 1. Enter the region *)
+       let state = enter_region { state with env } in
+       (* 2. Bind the type variables in the region *)
+       let state = { state with env = env_add_types state.env ~type_vars ~type_exprs } in
+       (* 3. Evaluate the body *)
+       let result = eval ~state body in
+       (* 4. Exit the region *)
+       exit_region state;
+       result
+     | _ -> raise_s [%message "Interpreter.eval_instance: type error"])
   | _ -> raise_s [%message "Interpreter.eval_instance: type error"]
 
 and eval ~state (exp : Typedtree.expression) : value =
@@ -141,17 +167,20 @@ and eval ~state (exp : Typedtree.expression) : value =
     let func_value = eval ~state func in
     let arg_value = eval ~state arg in
     (match func_value with
-    | Closure { env; param; body } ->
-      (match Memory.deref state.memory env with
-      | Env env ->
-        let env =
-          match match_pattern ~state:{ state with env } arg_value param with
-          | None -> raise_s [%message "Interpreter.eval: match error"]
-          | Some env -> env
-        in
-        eval ~state:{ state with env } body
-      | _ -> raise_s [%message "Interpreter.eval: expected `Env`"])
-    | _ -> raise_s [%message "Interpreter.eval: expected `Closure`"])
+     | Closure { env; param; body } ->
+       (match Memory.deref state.memory env with
+        | Env env ->
+          let state = enter_region { state with env } in
+          let state =
+            match match_pattern ~state arg_value param with
+            | None -> raise_s [%message "Interpreter.eval: match error"]
+            | Some env -> { state with env }
+          in
+          let result = eval ~state:{ state with env } body in
+          exit_region state;
+          result
+        | _ -> raise_s [%message "Interpreter.eval: expected `Env`"])
+     | _ -> raise_s [%message "Interpreter.eval: expected `Closure`"])
   | Texp_tuple exps ->
     let values = List.map exps ~f:(eval ~state) in
     let tuple_addr = Memory.alloc state.memory (Tuple values) ~realm in
